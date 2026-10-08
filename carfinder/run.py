@@ -36,22 +36,28 @@ def saveJson(path, obj):
 def crawlAll(cfg, fetcher, recs, meta):
     found, touched, status = [], [], {}
     known = {k: v["price"] for k, v in recs.items()}
-    areas = [("houston", cfg["home"], cfg["budget"]["stretchMax"])]
+    # houston craigslist reads up to compsMax so pricier ads can teach market value
+    areas = [("houston", cfg["home"], cfg["budget"]["stretchMax"], cfg["budget"]["compsMax"])]
     if cfg["austin"]["enabled"]:
-        areas.append(("austin", cfg["austin"], cfg["austinRule"]["maxPrice"]))
+        areas.append(("austin", cfg["austin"], cfg["austinRule"]["maxPrice"], cfg["austinRule"]["maxPrice"]))
 
-    for region, area, maxPrice in areas:
+    cargurusBlocked = False
+    for region, area, maxPrice, clMax in areas:
+        if cargurusBlocked:
+            status[f"cargurus-{region}"] = "skipped (blocked earlier this run)"
+        else:
+            try:
+                found += cargurus.crawl(fetcher, cfg, region, area, maxPrice, log)
+                status[f"cargurus-{region}"] = "ok"
+            except Blocked as e:
+                cargurusBlocked = True
+                status[f"cargurus-{region}"] = f"blocked: {e}"
+                log(f"cargurus {region} blocked: {e}")
+            except Exception as e:
+                status[f"cargurus-{region}"] = f"error: {e}"[:200]
+                log(f"cargurus {region} error: {e}")
         try:
-            found += cargurus.crawl(fetcher, cfg, region, area, maxPrice, log)
-            status[f"cargurus-{region}"] = "ok"
-        except Blocked as e:
-            status[f"cargurus-{region}"] = f"blocked: {e}"
-            log(f"cargurus {region} blocked: {e}")
-        except Exception as e:
-            status[f"cargurus-{region}"] = f"error: {e}"[:200]
-            log(f"cargurus {region} error: {e}")
-        try:
-            new, same = craigslist.crawl(fetcher, cfg, region, area, maxPrice, known, log)
+            new, same = craigslist.crawl(fetcher, cfg, region, area, clMax, known, log)
             found += new
             touched += same
             status[f"craigslist-{region}"] = "ok"
@@ -84,12 +90,18 @@ def mergeListings(recs, found, touched, now):
             recs[lid]["lastSeen"] = now
 
 
-def updateComps(comps, listings, now, maxAgeDays=45):
+def updateComps(comps, listings, now, cfg, maxAgeDays=45):
+    # every cargurus car, plus craigslist ads that are real cash prices for a clean, running car
     for l in listings:
-        if l.source != "cargurus" or not l.model:
+        if not l.model or not l.year or not l.miles or not l.price:
             continue
+        if l.source == "craigslist":
+            reject, _ = filters.evaluate(l, cfg)
+            if [r for r in reject if r != "over stretch budget"]:
+                continue
         comps.setdefault(l.model, {})[l.id] = {
-            "year": l.year, "miles": l.miles, "price": l.price, "marketValue": l.marketValue, "ts": now}
+            "year": l.year, "miles": l.miles, "price": l.price, "marketValue": l.marketValue,
+            "source": l.source, "ts": now}
     for model in comps:
         comps[model] = {k: v for k, v in comps[model].items() if now - v["ts"] < maxAgeDays * day}
 
@@ -159,28 +171,44 @@ def visionPass(recs, cfg, meta):
     queue = sorted((r for r in recs.values() if r.get("active") and r["tier"] in order
                     and r.get("photos") and r.get("visionPhotos") != r["photos"][:4]),
                    key=lambda r: order[r["tier"]])
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        log("photo checks off: ANTHROPIC_API_KEY secret not set")
+        return
+    errors = 0
     for rec in queue:
         if meta["visionCount"] >= cfg["vision"]["maxPerDay"]:
             break
         v = vision.check(rec["photos"], cfg)
         if v is None:
-            return  # no api key set
+            continue
         meta["visionCount"] += 1
+        if v.get("error"):
+            errors += 1
+            if errors == 1:
+                log(f"photo check error: {v['error']}")
+            if errors >= 3:
+                log("photo checks stopping this run after 3 errors")
+                return
+            continue  # don't save a failed check, so the car gets retried next run
         rec["vision"], rec["visionPhotos"] = v, rec["photos"][:4]
         if vision.isDealbreaker(v):
             rec["rejected"] = ["photos: " + (v.get("notes") or "looks rough")]
             rec["tier"] = "rejected"
 
 
-def alertPass(recs, meta, quiet):
+def alertPass(recs, meta, quiet, maxPerRun=5):
     kinds = {"steal": "steal", "stretch-deal": "stretch", "austin": "austin"}
     sent = 0
-    for rec in recs.values():
-        kind = kinds.get(rec.get("tier"))
-        if not kind or not rec.get("active") or rec["price"] in rec.get("alerted", []):
-            continue
-        if not quiet and notify.send(rec, kind):
-            sent += 1
+    # biggest discounts first, so the cap keeps the best ones
+    pending = sorted((r for r in recs.values() if kinds.get(r.get("tier")) and r.get("active")
+                      and r["price"] not in r.get("alerted", [])),
+                     key=lambda r: -(r["appraisal"].get("dealPct") or 0))
+    for rec in pending:
+        if not quiet:
+            if sent >= maxPerRun:
+                break
+            if notify.send(rec, kinds[rec["tier"]]):
+                sent += 1
         rec.setdefault("alerted", []).append(rec["price"])
     return sent
 
@@ -233,21 +261,21 @@ def main():
     if now - meta.get("compsAt", 0) > 6 * 3600:
         try:
             compList = cargurus.crawlComps(fetcher, cfg, cfg["home"], log)
-            updateComps(comps, compList, now)
+            updateComps(comps, compList, now, cfg)
             meta["compsAt"] = now
         except Exception as e:
             log(f"comps skipped: {e}")
 
     found, touched, status = crawlAll(cfg, fetcher, recs, meta)
     mergeListings(recs, found, touched, now)
-    updateComps(comps, found, now)
+    updateComps(comps, found, now, cfg)
     fits = pricing.buildFits({m: list(v.values()) for m, v in comps.items()})
     evaluateAll(recs, fits, nhtsa, cfg, now)
     visionPass(recs, cfg, meta)
 
     # first ever run: record everything as already seen so your phone doesn't get 40 pings
     firstRun = not meta.get("initialized")
-    sent = alertPass(recs, meta, quiet=args.quiet or firstRun)
+    sent = alertPass(recs, meta, quiet=args.quiet or firstRun, maxPerRun=cfg.get("alerts", {}).get("maxPerRun", 5))
     meta["initialized"] = True
     if firstRun and os.environ.get("NTFY_TOPIC") and not args.quiet:
         notify.sendText("Car finder is live",
