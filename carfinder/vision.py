@@ -23,15 +23,26 @@ def check(photos, cfg):
     content = [{"type": "image", "source": {"type": "url", "url": u}}
                for u in photos[:cfg["vision"]["maxPhotos"]]]
     content.append({"type": "text", "text": prompt})
+    headers = {"x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json"}
+    body = {"model": cfg["vision"]["model"], "max_tokens": 1024,
+            "thinking": {"type": "disabled"},  # a yes/no photo check doesn't need reasoning tokens
+            "messages": [{"role": "user", "content": content}]}
     try:
-        r = requests.post(apiUrl, timeout=60, headers={
-            "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
-            json={"model": cfg["vision"]["model"], "max_tokens": 300,
-                  "messages": [{"role": "user", "content": content}]})
-        r.raise_for_status()
-        text = "".join(b.get("text", "") for b in r.json().get("content", []))
+        r = requests.post(apiUrl, timeout=60, headers=headers, json=body)
+        if r.status_code == 400:
+            # model may not allow thinking off; let it think but leave room for the answer
+            body.pop("thinking")
+            body["max_tokens"] = 4096
+            r = requests.post(apiUrl, timeout=90, headers=headers, json=body)
+        if not r.ok:
+            return {"error": f"{r.status_code}: {r.text[:200]}"}
+        data = r.json()
+        text = "".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text")
         hit = re.search(r"\{.*\}", text, re.S)
-        return json.loads(hit.group(0)) if hit else {"error": "reply had no json: " + text[:120]}
+        if not hit:
+            kinds = [b.get("type") for b in data.get("content", [])]
+            return {"error": f"no json (stop: {data.get('stop_reason')}, blocks: {kinds}) {text[:80]}"}
+        return json.loads(hit.group(0))
     except Exception as e:
         return {"error": str(e)[:200]}
 
