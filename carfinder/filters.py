@@ -28,6 +28,10 @@ mechanicalWarn = [r"\bcheck engine\b", r"\bcel\b", r"\bneeds (some )?work\b", r"
                   r"\bac (doesn'?t|not) (work|blow)", r"\bneeds (ac|a/c)\b", r"\boverheat",
                   r"\bleak", r"\bnoise\b", r"\bslipping\b", r"\bneeds tires\b", r"\bairbag light\b"]
 
+# classic craigslist scam tells: obfuscated years like "2O17", deployed sellers, escrow, shipping
+scamPatterns = [r"\bdeployed\b", r"\bdeployment\b", r"\bescrow\b", r"\bebay motors\b",
+                r"\bgift ?cards?\b", r"\bshipping (is )?(free|included)\b", r"\bfree shipping\b"]
+
 paintWarn = [r"\bfad(ed|ing) paint\b", r"\bclear ?coat\b", r"\bpeeling\b", r"\bhail\b",
              r"\bdents?\b", r"\bbody damage\b", r"\bscratches\b", r"\bdings?\b", r"\boxidi[sz]"]
 
@@ -93,6 +97,10 @@ def evaluate(lst, cfg):
         reject.append("keyword-stuffed dealer spam")
     if anyMatch(mechanicalReject, text):
         reject.append("needs real mechanical work")
+    rawText = f"{lst.title} {lst.description}"
+    fakeYear = any("o" in m.lower() for m in re.findall(r"2[0oO][0-9oO][0-9]", rawText))
+    if fakeYear or anyMatch(scamPatterns, rawText):
+        reject.append("scam signals in ad")
 
     if lst.model == "Tacoma":
         ok, note = tacomaMpgOk(lst)
