@@ -10,6 +10,9 @@ from ..fetch import Blocked
 
 siteHosts = {"houston": "houston", "austin": "austin"}
 
+dealerCues = re.compile(r"\b(dealer(ship)?|stock ?(#|no|number)|we finance|financing available|"
+                        r"warranty available|trade[- ]ins? (welcome|accepted)|tx dealer|dealer fees?)\b", re.I)
+
 
 def searchUrl(region, area, cfg, word, maxPrice):
     params = {
@@ -109,7 +112,7 @@ def buildListing(postId, url, title, price, detail, cfg, region):
         year=detail.get("year"),
         miles=parseInt(attrs.get("auto_miles")),
         trim=detail.get("makemodel", ""),
-        sellerType="dealer" if "/ctd/" in url else "private",
+        sellerType="dealer" if "/ctd/" in url or dealerCues.search(title + " " + detail.get("body", "")) else "private",
         titleStatus=attrs.get("auto_title_status", ""),
         cylinders=cyl,
         drive=attrs.get("auto_drivetrain", ""),
@@ -134,7 +137,8 @@ def crawl(fetcher, cfg, region, area, maxPrice, known, log):
 
     budgetLeft = cfg["crawl"]["maxDetailFetchesPerRun"]
     unchanged = []
-    for postId, (pid, url, title, price) in seen.items():
+    # cheapest first so in-budget cars get opened before comps-only ones
+    for postId, (pid, url, title, price) in sorted(seen.items(), key=lambda kv: kv[1][3] or 10 ** 9):
         lid = "cl:" + postId
         if lid in known and known[lid] == price:
             unchanged.append(lid)
