@@ -1,0 +1,59 @@
+## where to search
+home:
+  name: Rice University
+  zip: "77005"
+  lat: 29.7174
+  lon: -95.4018
+  radiusMiles: 50
+
+# austin only alerts when a car is an absolute no-brainer (see austinRule)
+austin:
+  enabled: true
+  zip: "78701"
+  lat: 30.2672
+  lon: -97.7431
+  radiusMiles: 30
+
+## what you'll buy
+budget:
+  alertMax: 6000      # alerts fire at or under this
+  stretchMax: 7500    # shown on dashboard, alerts only for big discounts on top picks
+  minPrice: 1500      # anything cheaper is almost always a down-payment ad
+
+minYear: 2005
+maxMiles: 170000
+minMpg: 20
+
+# make, model, cargurus entity path, craigslist search words, priority (1 = top pick)
+models:
+  - {make: Toyota, model: Tacoma,  cargurus: m7/d311, words: [tacoma],           priority: 1}
+  - {make: Honda,  model: CR-V,    cargurus: m6/d589, words: [cr-v, crv],        priority: 1}
+  - {make: Toyota, model: RAV4,    cargurus: m7/d306, words: [rav4, rav-4],      priority: 2}
+  - {make: Toyota, model: Camry,   cargurus: m7/d292, words: [camry],            priority: 2}
+  - {make: Honda,  model: Accord,  cargurus: m6/d585, words: [accord],           priority: 2}
+  - {make: Toyota, model: Corolla, cargurus: m7/d295, words: [corolla],          priority: 3}
+  - {make: Honda,  model: Civic,   cargurus: m6/d586, words: [civic],            priority: 3}
+
+## what counts as a deal
+deal:
+  alertPct: 0.10        # in-budget car at least 10% under market value
+  stretchAlertPct: 0.20 # stretch-tier top pick at least 20% under
+  minComps: 8           # need this many similar cars before trusting a market value
+  privateDiscount: 0.92 # private sellers usually land ~8% under dealer value
+
+austinRule:
+  minPct: 0.25
+  maxMiles: 150000
+  maxPrice: 6000        # must be in budget, no stretch
+
+## photo ai (claude haiku), only runs on alert candidates
+vision:
+  model: claude-haiku-5-5
+  maxPerDay: 150        # ~$0.0007 each, so the cap is ~$3/month worst case
+  maxPhotos: 4
+
+## crawling manners
+crawl:
+  delaySeconds: 1.5
+  maxDetailFetchesPerRun: 60
+  dropAfterDays: 30
