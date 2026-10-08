@@ -1,0 +1,52 @@
+name: crawl
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"   # every 10 min (github sometimes runs these a few minutes late)
+  workflow_dispatch:
+
+concurrency:
+  group: crawl
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: get saved history + dashboard data (creates it on the first run)
+        env:
+          REMOTE: https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}
+        run: |
+          git clone -q --depth 1 --branch data "$REMOTE" state || \
+            (mkdir -p state && cd state && git init -q && git remote add origin "$REMOTE")
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: crawl, score, alert
+        run: python -m carfinder.run --state state
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+      - name: save to data branch (single commit, so the repo never bloats)
+        run: |
+          cp dashboard/index.html state/index.html
+          touch state/.nojekyll
+          cd state
+          git config user.name "car-finder-bot"
+          git config user.email "car-finder-bot@users.noreply.github.com"
+          git checkout --orphan snapshot
+          git add -A
+          git commit -q -m "crawl $(date -u +%FT%TZ)"
+          git push -f origin snapshot:data
