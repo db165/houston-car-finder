@@ -30,7 +30,8 @@ def fitModel(comps):
     coef = np.linalg.solve(X.T @ X + lam, X.T @ y)
     resid = y - X @ coef
     spread = float(np.std(resid)) if len(rows) > 3 else 0.25
-    return {"coef": coef.tolist(), "n": len(rows), "spread": spread,
+    dealerShare = sum(1 for c in comps if c.get("source") == "cargurus") / max(len(comps), 1)
+    return {"coef": coef.tolist(), "n": len(rows), "spread": spread, "dealerShare": dealerShare,
             "yearRange": [int(yr.min()), int(yr.max())],
             "milesRange": [int(mi.min()), int(mi.max())]}
 
@@ -67,7 +68,8 @@ def appraise(lst, fits, cfg):
     if est is None:
         return {"marketValue": None, "dealPct": None, "confidence": "none", "basis": "not enough data"}
 
-    if lst.get("sellerType") == "private":
+    # comps from craigslist are already mostly private asking prices; only discount dealer-based values
+    if lst.get("sellerType") == "private" and (lst.get("source") == "cargurus" or (fit or {}).get("dealerShare", 0) > 0.5):
         est *= dealCfg["privateDiscount"]
 
     pct = (est - lst["price"]) / est if lst.get("price") else None
