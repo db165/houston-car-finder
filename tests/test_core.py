@@ -116,6 +116,13 @@ def test_cargurus_extract_and_pricing():
     assert a["confidence"] == "high" and 0.20 < a["dealPct"] < 0.30  # 9000*0.92=8280 -> 27.5% under
 
 
+def test_scam_signals():
+    base = dict(source="craigslist", url="u", price=3480, make="Honda", model="Accord", year=2017, miles=103000)
+    assert "scam signals in ad" in filters.evaluate(Listing(id="a", title="Recently2O17 Honda Accord EXL", **base), cfg)[0]
+    assert "scam signals in ad" in filters.evaluate(Listing(id="b", title="2017 Honda Accord", description="I am deployed, payment through escrow", **base), cfg)[0]
+    assert "scam signals in ad" not in filters.evaluate(Listing(id="c", title="2017 Honda Accord EX one owner", **base), cfg)[0]
+
+
 def test_complaint_flag():
     cache = {"CR-V": {"counts": {"2010": 300, "2011": 900, "2012": 280, "2013": 250, "2014": 320}}}
     assert reliability.complaintFlag(cache, "CR-V", 2011) is not None
