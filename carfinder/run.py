@@ -2,7 +2,9 @@
 
 import argparse
 import json
+import math
 import os
+import statistics
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -155,13 +157,41 @@ def evaluateAll(recs, fits, nhtsa, cfg, now):
         rec["rejected"], rec["flags"] = reject, warn
         rec["appraisal"] = pricing.appraise(rec, fits, cfg) if rec.get("model") and rec.get("price") else \
             {"marketValue": None, "dealPct": None, "confidence": "none", "basis": ""}
+
+    calibrate(recs, cfg)
+
+    for rec in recs.values():
+        if not rec.get("active"):
+            continue
         pct = rec["appraisal"].get("dealPct")
         if pct is not None and pct > cfg["deal"].get("scamPct", 0.45):
-            reject.append(f"{pct * 100:.0f}% under market: too good to be true (likely scam or hidden problem)")
-        rec["tier"] = "rejected" if reject else classify(rec, cfg)
+            rec["rejected"].append(f"{pct * 100:.0f}% under market: too good to be true (likely scam or hidden problem)")
+        rec["tier"] = "rejected" if rec["rejected"] else classify(rec, cfg)
         if rec["tier"] == "austin-skip":
             rec["rejected"] = ["Austin, not worth the drive"]
             rec["tier"] = "rejected"
+
+
+def calibrate(recs, cfg, minCars=10):
+    # the market as a whole can't be 25% underpriced. craigslist comps lean dealer-priced, so private
+    # cars all look cheap against the raw curve. re-center so a "deal" means cheaper than the other
+    # cars you could actually buy right now, at their year and mileage.
+    ratios = [math.log(r["appraisal"]["marketValue"] / r["price"]) for r in recs.values()
+              if r.get("active") and not r["rejected"] and r["region"] == "houston"
+              and r.get("price") and r["price"] <= cfg["budget"]["stretchMax"]
+              and r["appraisal"].get("marketValue")]
+    offset = statistics.median(ratios) if len(ratios) >= minCars else None
+    for r in recs.values():
+        a = r.get("appraisal") or {}
+        if not r.get("active") or not a.get("marketValue") or not r.get("price"):
+            continue
+        if offset is None:
+            a["confidence"] = "low"  # not enough cars yet to know what normal looks like
+            continue
+        typical = a["marketValue"] / math.exp(offset)
+        a["rawValue"], a["marketValue"] = a["marketValue"], round(typical)
+        a["dealPct"] = round(1 - r["price"] / typical, 3)
+        a["basis"] += f", centered on {len(ratios)} current listings"
 
 
 ## photos + alerts
