@@ -19,6 +19,7 @@ budget:
   alertMax: 6000      # alerts fire at or under this
   stretchMax: 7500    # shown on dashboard, alerts only for big discounts on top picks
   minPrice: 1500      # anything cheaper is almost always a down-payment ad
+  compsMax: 15000     # craigslist ads up to this price are read only to learn market value
 
 minYear: 2005
 maxMiles: 170000
@@ -45,6 +46,9 @@ austinRule:
   minPct: 0.25
   maxMiles: 150000
   maxPrice: 6000        # must be in budget, no stretch
+
+alerts:
+  maxPerRun: 5         # cap so a burst of new deals can't flood your phone
 
 ## photo ai (claude haiku), only runs on alert candidates
 vision:
