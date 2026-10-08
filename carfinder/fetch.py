@@ -31,7 +31,7 @@ class Fetcher:
         self.requestCount += 1
         resp = self.session.get(url, timeout=30, **kwargs)
         # a site saying no once means we stop hitting it this run
-        if resp.status_code in (403, 429) or "captcha" in resp.text[:5000].lower():
+        if resp.status_code in (403, 406, 429) or "captcha" in resp.text[:5000].lower():
             raise Blocked(f"{resp.status_code} from {url.split('?')[0]}")
         resp.raise_for_status()
         return resp
