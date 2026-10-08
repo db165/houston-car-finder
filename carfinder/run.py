@@ -155,6 +155,9 @@ def evaluateAll(recs, fits, nhtsa, cfg, now):
         rec["rejected"], rec["flags"] = reject, warn
         rec["appraisal"] = pricing.appraise(rec, fits, cfg) if rec.get("model") and rec.get("price") else \
             {"marketValue": None, "dealPct": None, "confidence": "none", "basis": ""}
+        pct = rec["appraisal"].get("dealPct")
+        if pct is not None and pct > cfg["deal"].get("scamPct", 0.45):
+            reject.append(f"{pct * 100:.0f}% under market: too good to be true (likely scam or hidden problem)")
         rec["tier"] = "rejected" if reject else classify(rec, cfg)
         if rec["tier"] == "austin-skip":
             rec["rejected"] = ["Austin, not worth the drive"]
