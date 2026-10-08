@@ -31,7 +31,7 @@ def check(photos, cfg):
         r.raise_for_status()
         text = "".join(b.get("text", "") for b in r.json().get("content", []))
         hit = re.search(r"\{.*\}", text, re.S)
-        return json.loads(hit.group(0)) if hit else None
+        return json.loads(hit.group(0)) if hit else {"error": "reply had no json: " + text[:120]}
     except Exception as e:
         return {"error": str(e)[:200]}
 
