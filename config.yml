@@ -41,6 +41,7 @@ deal:
   stretchAlertPct: 0.20 # stretch-tier top pick at least 20% under
   minComps: 8           # need this many similar cars before trusting a market value
   privateDiscount: 0.92 # private sellers usually land ~8% under dealer value
+  scamPct: 0.45        # more than 45% under market is almost always a scam or a hidden problem
 
 austinRule:
   minPct: 0.25
