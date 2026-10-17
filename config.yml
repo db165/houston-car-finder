@@ -25,15 +25,20 @@ minYear: 2005
 maxMiles: 170000
 minMpg: 20
 
-# make, model, cargurus entity path, craigslist search words, priority (1 = top pick)
+# make, model, cargurus entity path, search words, priority (1 = top pick)
+# optional per model: minYear/maxYear override the global years, manualOnly, excludeWords
 models:
-  - {make: Toyota, model: Tacoma,  cargurus: m7/d311, words: [tacoma],           priority: 1}
+  # 1995-2010 tacomas all had toyota frame-rust programs, so start at 2011 (still the older 2nd gen)
+  - {make: Toyota, model: Tacoma,  cargurus: m7/d311, words: [tacoma],           priority: 1, minYear: 2011}
   - {make: Honda,  model: CR-V,    cargurus: m6/d589, words: [cr-v, crv],        priority: 1}
   - {make: Toyota, model: RAV4,    cargurus: m7/d306, words: [rav4, rav-4],      priority: 2}
   - {make: Toyota, model: Camry,   cargurus: m7/d292, words: [camry],            priority: 2}
   - {make: Honda,  model: Accord,  cargurus: m6/d585, words: [accord],           priority: 2}
   - {make: Toyota, model: Corolla, cargurus: m7/d295, words: [corolla],          priority: 3}
   - {make: Honda,  model: Civic,   cargurus: m6/d586, words: [civic],            priority: 3}
+  # automatic rangers of this era are unreliable; only the 4-cyl manuals clear 20 mpg
+  - {make: Ford,   model: Ranger,  cargurus: m2/d354, words: [ranger],           priority: 2,
+     minYear: 1998, maxYear: 2008, maxMiles: 145000, manualOnly: true, excludeWords: [polaris]}
 
 ## what counts as a deal
 deal:
@@ -51,6 +56,30 @@ austinRule:
 alerts:
   maxPerRun: 5         # cap so a burst of new deals can't flood your phone
 
+## salvage auctions (copart + iaa): damaged cars near dad's body shop, collected by the raspberry pi
+copart:
+  enabled: true
+  center: {name: "Dad's shop (Buffalo Grove)", zip: "60089", lat: 42.1664, lon: -87.9631}
+  radiusMiles: 50
+  # yards are pre-filtered here, then trimmed to the radius using each lot's coordinates
+  yards: ["IL - WHEELING", "IL - CHICAGO NORTH", "IL - CHICAGO SOUTH", "IN - DYER",
+          "WI - MILWAUKEE SOUTH", "WI - MILWAUKEE NORTH"]
+  makes: [TOYOTA, HONDA, LEXUS, MAZDA]
+  # "MAKE MODEL" prefixes, compared with spaces/dashes stripped (copart writes CRV, RX350, 3)
+  models: [TOYOTA RAV4, TOYOTA CAMRY, TOYOTA COROLLA, TOYOTA HIGHLANDER, TOYOTA TACOMA, TOYOTA PRIUS,
+           HONDA CR-V, HONDA ACCORD, HONDA CIVIC, HONDA FIT, HONDA HR-V,
+           LEXUS ES, LEXUS RX, MAZDA CX-5, MAZDA 3]
+  cleanTitleOnly: true
+  minYear: 2012
+  maxMiles: 150000
+  maxMilesByModel: {TOYOTA RAV4: 160000}
+  maxRetailValue: 25000
+  damage: [FRONT END, MINOR DENT/SCRATCHES]            # primary damage must be one of these
+  okSecondary: [FRONT END, MINOR DENT/SCRATCHES, NORMAL WEAR]
+  conditions: [RUNS AND DRIVES, ENHANCED VEHICLES]     # copart verified it starts and drives
+  maxRepairRatio: 0.5   # insurer repair estimate / retail value; mild hits are usually well under
+  maxAlertsPerRun: 5
+
 ## photo ai (claude haiku), only runs on alert candidates
 vision:
   model: claude-haiku-5-5
@@ -60,5 +89,6 @@ vision:
 ## crawling manners
 crawl:
   delaySeconds: 1.5
+  piStaleHours: 6        # ignore pi data older than this (pi offline)
   maxDetailFetchesPerRun: 60
   dropAfterDays: 30
