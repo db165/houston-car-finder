@@ -3,6 +3,9 @@
 ## run with:  curl -fsSL https://raw.githubusercontent.com/db165/houston-car-finder/main/pi/setup.sh | bash
 set -euo pipefail
 
+# wrapped in main so bash reads the whole file before running it (curl | bash safe)
+main() {
+
 repo="$HOME/houston-car-finder"
 key="$HOME/.ssh/carfinder_deploy"
 
@@ -32,7 +35,7 @@ EOF
 fi
 ssh-keyscan -q github.com >> "$HOME/.ssh/known_hosts" 2>/dev/null
 
-keyWorks() { local out; out=$(ssh -o BatchMode=yes -T git@github-carfinder 2>&1 || true); [[ "$out" == *"successfully authenticated"* ]]; }
+keyWorks() { local out; out=$(ssh -n -o BatchMode=yes -T git@github-carfinder 2>&1 < /dev/null || true); [[ "$out" == *"successfully authenticated"* ]]; }
 until keyWorks; do
   echo
   echo "Add this key on GitHub: repo -> Settings -> Deploy keys -> Add deploy key"
@@ -81,3 +84,6 @@ echo
 echo "All set. Useful commands:"
 echo "  journalctl -u carfinder -n 40     # last run's log"
 echo "  systemctl list-timers carfinder   # when it runs next"
+}
+
+main "$@" < /dev/null
