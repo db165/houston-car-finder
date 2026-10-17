@@ -127,25 +127,37 @@ def crawl(fetcher, cfg, region, area, maxPrice, known, log, maxDetails=40):
                     tiles[lid] = (t, m)
     log(f"offerup {region}: {len(tiles)} matching tiles")
 
-    out, budget = [], maxDetails
+    out, budget, detailsBlocked = [], maxDetails, False
     for lid, (t, m) in tiles.items():
         price = parseInt(t.get("price"))
         if price and price > maxPrice:
             continue
         cached = known.get(lid)
-        if not cached or cached.get("price") != price:
-            if budget <= 0:
-                continue
+        if (not cached or cached.get("price") != price) and budget > 0 and not detailsBlocked:
             budget -= 1
             try:
                 det = parseDetail(fetcher.get(f"https://offerup.com/item/detail/{lid}").text)
-            except Blocked:
-                raise
+                if det:
+                    known[lid] = cached = {"price": price, "detail": det}
+            except Blocked as e:
+                # item pages refuse us; stop asking and keep what the search page showed
+                detailsBlocked = True
+                log(f"  offerup item pages blocked ({e}), using search results only")
             except Exception as e:
                 log(f"  offerup detail {lid}: {e}")
-                continue
-            if not det:
-                continue
-            known[lid] = cached = {"price": price, "detail": det}
-        out.append(buildListing(lid, t, cached["detail"], m, region))
+        if cached and cached.get("detail"):
+            out.append(buildListing(lid, t, cached["detail"], m, region))
+        else:
+            out.append(buildListing(lid, t, tileDetail(t), m, region))
     return out
+
+
+def tileDetail(t):
+    # just what the search tile shows; title status and transmission stay unknown
+    title = t.get("title") or ""
+    yr = re.search(r"\b(19[89]\d|20[0-3]\d)\b", title)
+    img = t.get("image") or {}
+    return {"title": title, "price": parseInt(t.get("price")), "year": int(yr.group(1)) if yr else None,
+            "miles": parseInt(t.get("vehicleMiles")), "city": t.get("locationName") or "",
+            "photos": [img["url"]] if isinstance(img, dict) and img.get("url") else [],
+            "description": "OfferUp listing page not read: ask the seller about title status and transmission"}
