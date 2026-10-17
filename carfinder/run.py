@@ -45,10 +45,10 @@ def crawlAll(cfg, fetcher, recs, meta):
     if cfg["austin"]["enabled"]:
         areas.append(("austin", cfg["austin"], cfg["austinRule"]["maxPrice"], cfg["austinRule"]["maxPrice"]))
 
-    cargurusBlocked = False
+    cargurusBlocked = not cfg["crawl"].get("cargurus", True)
     for region, area, maxPrice, clMax in areas:
         if cargurusBlocked:
-            status[f"cargurus-{region}"] = "skipped (blocked earlier this run)"
+            status[f"cargurus-{region}"] = "off" if not cfg["crawl"].get("cargurus", True) else "skipped (blocked earlier this run)"
         else:
             try:
                 found += cargurus.crawl(fetcher, cfg, region, area, maxPrice, log)
@@ -411,7 +411,7 @@ def main():
 
     nhtsa = reliability.refreshComplaints(nhtsa, cfg, log)
 
-    if now - meta.get("compsAt", 0) > 6 * 3600:
+    if cfg["crawl"].get("cargurus", True) and now - meta.get("compsAt", 0) > 6 * 3600:
         try:
             compList = cargurus.crawlComps(fetcher, cfg, cfg["home"], log)
             updateComps(comps, compList, now, cfg)
