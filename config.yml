@@ -89,6 +89,7 @@ vision:
 ## crawling manners
 crawl:
   delaySeconds: 1.5
+  cargurus: false        # cargurus refuses automated visits from github and from home, so it's off
   piStaleHours: 6        # ignore pi data older than this (pi offline)
   maxDetailFetchesPerRun: 60
   dropAfterDays: 30
