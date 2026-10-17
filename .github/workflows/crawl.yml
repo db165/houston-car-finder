@@ -26,6 +26,9 @@ jobs:
           git clone -q --depth 1 --branch data "$REMOTE" state || \
             (mkdir -p state && cd state && git init -q && git remote add origin "$REMOTE")
 
+      - name: get the raspberry pi's latest snapshot (empty until the pi is set up)
+        run: git clone -q --depth 1 --branch collected https://github.com/${{ github.repository }} collected || mkdir -p collected
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -34,7 +37,7 @@ jobs:
       - run: pip install -r requirements.txt
 
       - name: crawl, score, alert
-        run: python -m carfinder.run --state state
+        run: python -m carfinder.run --state state --collected collected
         env:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
