@@ -130,3 +130,12 @@ def test_rav4_auction_miles_and_tacoma_years():
     taco = Listing(id="t", source="craigslist", url="u", title="2009 toyota tacoma", price=7000, make="Toyota",
                    model="Tacoma", year=2009, miles=150000, cylinders=4, drive="rwd")
     assert "older than 2011" in filters.evaluate(taco, cfg)[0]
+
+
+def test_offerup_tile_only():
+    t = {"listingId": "z", "title": "2012 Honda CR-V EX", "price": "5800", "vehicleMiles": 141,
+         "locationName": "Houston, TX", "image": {"url": "https://img/z.jpg"}}
+    crv = next(m for m in cfg["models"] if m["model"] == "CR-V")
+    l = offerup.buildListing("z", t, offerup.tileDetail(t), crv, "houston")
+    assert l.year == 2012 and l.miles == 141000 and l.price == 5800 and l.photos == ["https://img/z.jpg"]
+    assert filters.evaluate(l, cfg)[0] == []
