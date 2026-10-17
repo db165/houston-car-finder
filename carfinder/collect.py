@@ -61,14 +61,17 @@ def main():
         # each site gets its own throttle so a slow one doesn't starve the rest
         listings += guarded(status, f"autolist-{region}",
                             lambda: autolist.crawl(Fetcher(cfg["crawl"]["delaySeconds"]), cfg, region, area, compsMax, log))
-        listings += guarded(status, f"cargurus-{region}",
-                            lambda: cargurus.crawl(Fetcher(cfg["crawl"]["delaySeconds"]), cfg, region, area, maxPrice, log))
+        if cfg["crawl"].get("cargurus", True):
+            listings += guarded(status, f"cargurus-{region}",
+                                lambda: cargurus.crawl(Fetcher(cfg["crawl"]["delaySeconds"]), cfg, region, area, maxPrice, log))
     houston = dict(cfg["home"], city="Houston", state="TX")
     listings += guarded(status, "offerup-houston",
                         lambda: offerup.crawl(Fetcher(cfg["crawl"]["delaySeconds"]), cfg, "houston", houston,
                                               cfg["budget"]["stretchMax"], ouKnown, log))
-    comps = guarded(status, "cargurus-comps",
-                    lambda: cargurus.crawlComps(Fetcher(cfg["crawl"]["delaySeconds"]), cfg, cfg["home"], log))
+    comps = []
+    if cfg["crawl"].get("cargurus", True):
+        comps = guarded(status, "cargurus-comps",
+                        lambda: cargurus.crawlComps(Fetcher(cfg["crawl"]["delaySeconds"]), cfg, cfg["home"], log))
 
     sc = cfg.get("copart", {})
     if sc.get("enabled"):
