@@ -16,13 +16,22 @@ Look only at what is visible. Reply with ONLY this JSON:
 floodSigns = waterline marks, silt/mud in interior, corroded seat rails, mildew. If photos are stock images or only show text, photosUseful=false."""
 
 
-def check(photos, cfg):
+damagePrompt = """These are salvage auction photos of a damaged car. The buyer's dad owns a body shop and wants cars with MILD, cosmetic-to-moderate front damage that a body shop can fix cheaply (bumper cover, grille, headlight, hood, fender).
+Look only at what is visible. Reply with ONLY this JSON:
+{"severity": "mild|moderate|severe", "airbagsDeployed": true/false, "structural": true/false,
+ "partsLikely": ["short part names"], "photosUseful": true/false,
+ "verdict": "good candidate|maybe|skip", "notes": "one short sentence for the body shop"}
+"severe" = crumpled frame rails, pushed-in radiator support, engine/suspension damage, damage past the front wheels.
+structural = frame/unibody, strut tower, or radiator support visibly bent. If photos don't show the damage, photosUseful=false."""
+
+
+def check(photos, cfg, text=None):
     key = os.environ.get("ANTHROPIC_API_KEY")
     if not key or not photos:
         return None
     content = [{"type": "image", "source": {"type": "url", "url": u}}
                for u in photos[:cfg["vision"]["maxPhotos"]]]
-    content.append({"type": "text", "text": prompt})
+    content.append({"type": "text", "text": text or prompt})
     headers = {"x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json"}
     body = {"model": cfg["vision"]["model"], "max_tokens": 1024,
             "thinking": {"type": "disabled"},  # a yes/no photo check doesn't need reasoning tokens
@@ -52,3 +61,10 @@ def isDealbreaker(v):
         return False
     return v.get("paint") == "poor" or v.get("body") == "major" or v.get("rust") == "heavy" \
         or v.get("floodSigns") is True or v.get("verdict") == "skip"
+
+
+def isDamageDealbreaker(v):
+    if not v or v.get("error") or not v.get("photosUseful", True):
+        return False
+    return v.get("severity") == "severe" or v.get("airbagsDeployed") is True or v.get("structural") is True \
+        or v.get("verdict") == "skip"
