@@ -45,3 +45,36 @@ def send(rec, kind):
         return r.ok
     except Exception:
         return False
+
+
+def sendLot(lot):
+    topic = os.environ.get("NTFY_TOPIC")
+    if not topic:
+        return False
+    src = "Copart" if lot["source"] == "copart" else "IAA"
+    lines = []
+    if lot.get("retailValue"):
+        rc = f", est repair ${lot['repairCost']:,.0f}" if lot.get("repairCost") else ""
+        lines.append(f"retail ~${lot['retailValue']:,.0f}{rc}")
+    bid = f"bid ${lot['currentBid']:,.0f}" if lot.get("currentBid") else "no bids yet"
+    lines.append(f"{bid} · sale {lot.get('saleText') or lot.get('saleDate') or 'TBD'}")
+    miles = f" · {lot['miles']:,} mi" if isinstance(lot.get("miles"), int) and lot["miles"] > 0 else ""
+    lines.append(f"{lot.get('damage', '').title()} · {lot.get('condition', '').title()}{miles}")
+    where = lot.get("yard") or ""
+    if lot.get("distance") is not None:
+        where += f" ({lot['distance']:.0f} mi from shop)"
+    lines.append(where)
+    v = lot.get("vision")
+    if v and not v.get("error"):
+        lines.append(f"photos: {v.get('severity')} damage. {v.get('notes', '')}")
+    for f in lot.get("flags", [])[:2]:
+        lines.append("⚠ " + f)
+    headers = {"Title": f"{src}: {lot['year']} {lot['make']} {lot['model']}", "Click": lot["url"],
+               "Priority": "default", "Tags": "wrench"}
+    if lot.get("photos"):
+        headers["Attach"] = lot["photos"][0]
+    try:
+        return requests.post(f"https://ntfy.sh/{topic}", data="\n".join(lines).encode("utf-8"),
+                             headers=headers, timeout=20).ok
+    except Exception:
+        return False
