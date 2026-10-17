@@ -22,6 +22,7 @@ class Listing:
     titleStatus: str = ""         # clean, salvage, rebuilt...
     cylinders: Optional[int] = None
     drive: str = ""               # fwd, 4wd, rwd
+    transmission: str = ""        # manual | automatic | "" when the ad doesn't say
     mpg: Optional[float] = None
     vin: str = ""
     lat: Optional[float] = None
@@ -59,6 +60,8 @@ def matchModel(text, models):
     low = " " + (text or "").lower() + " "
     hits = []
     for m in models:
+        if any(x in low for x in m.get("excludeWords", [])):
+            continue
         for w in m["words"]:
             if re.search(r"(?<![a-z0-9])" + re.escape(w) + r"(?![a-z0-9])", low):
                 hits.append(m)
@@ -69,3 +72,20 @@ def matchModel(text, models):
 def countModelMentions(text, models):
     low = (text or "").lower()
     return sum(1 for m in models if any(w in low for w in m["words"]))
+
+
+def transmissionOf(*texts):
+    # normalize whatever a site calls it; fall back to reading the ad text
+    joined = " ".join(t for t in texts if t).lower()
+    if not joined:
+        return ""
+    if re.search(r"\b(manual|stick ?shift|stick|[456]-? ?speed manual|[56] ?spd|[56][- ]?speed)\b", joined) \
+            and not re.search(r"\bautomatic\b", joined):
+        return "manual"
+    if re.search(r"\b(automatic|auto trans|cvt|a/t)\b", joined):
+        return "automatic"
+    return ""
+
+
+def modelCfg(cfg, model):
+    return next((m for m in cfg["models"] if m["model"] == model), {})
