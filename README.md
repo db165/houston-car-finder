@@ -1,17 +1,22 @@
 # Houston Car Finder
 
-Watches Craigslist and CarGurus within 50 miles of Rice every 10 minutes, prices every reliable Honda/Toyota against the local market, and pings your phone when one is underpriced, in budget, and doesn't look like it needs work.
+Watches used-car listings within 50 miles of Rice every 10 minutes, prices every reliable Honda/Toyota (plus manual 1998-2008 Ford Rangers under 145k) against the local market, and pings your phone when one is underpriced, in budget, and doesn't look like it needs work.
+
+It also watches Copart and IAA salvage auctions within 50 miles of Buffalo Grove, IL for clean-title, drivable Japanese cars with mild front-end damage that a body shop can fix.
 
 Inspired by [carbuyer](https://github.com/Dropio12/used-car-deal-finder) from Hack the North. Same idea, rebuilt from scratch in Python for Houston, a sub-$6k budget, and "little to no work."
 
 ## How it works
 
 ```
-GitHub Actions (every 10 min)
-   │
-   ├─ CarGurus ── dealer cars + CarGurus' own market value per car
-   ├─ Craigslist ─ private + dealer ads, opens each new ad for year/miles/title/VIN
-   │
+Raspberry Pi at home (every 10 min)          GitHub Actions (every 10 min)
+   ├─ Autolist ── dealer cars + history         ├─ Craigslist ─ private + dealer ads
+   ├─ OfferUp ─── private sellers               │
+   ├─ CarGurus ── dealer cars + market value    │  merges the pi's snapshot
+   ├─ Copart ──── salvage auctions (IL)  ──push─┤  from the "collected" branch
+   └─ IAA ─────── salvage auctions (IL)         │
+   (these sites block cloud servers,            ▼
+    so the pi fetches them from home)
    ▼
  filters.py ── reject: wrong model, >170k mi, <2005, branded title, <20 mpg,
    │           finance/down-payment ads, "mechanic special", keyword spam
@@ -34,12 +39,30 @@ GitHub Actions (every 10 min)
  data branch ── history + dashboard, served by GitHub Pages
 ```
 
+Tacomas start at 2011 because every 1995-2010 Tacoma was covered by a Toyota frame-rust program.
+
 Each car alerts once per price. If the price drops again, you get pinged again.
 
 ## Things it can't do for you
 
 - **Flood history.** Houston's biggest used-car risk. The dashboard has a "Flood check" button that copies the VIN and opens NICB's free VINCheck (it has a captcha, so it can't be automated). Run it on any car before you drive out, and get a Carfax or AutoCheck on the finalist.
 - **Facebook Marketplace.** It's where a lot of Houston private sales happen, but it requires a login and blocks bots. Check it by hand.
+
+## Copart + IAA (dad's shop)
+
+Lots must be clean title, verified "runs and drives", primary damage front end or minor dents, no deployed airbags, 2012 or newer, under 150k miles (160k for RAV4s), and an insurer repair estimate under half the car's value. Photos then go to Claude Haiku, which throws out anything with structural or severe damage. Matches show on the "Copart + IAA" tab and alert once per lot.
+
+Illinois Copart/IAA lots generally need a dealer or rebuilder license (or a broker) to bid.
+
+## Raspberry Pi
+
+One-time: flash Raspberry Pi OS Lite with Raspberry Pi Imager (set Wi-Fi + SSH there), SSH in, then:
+
+```
+curl -fsSL https://raw.githubusercontent.com/db165/houston-car-finder/main/pi/setup.sh | bash
+```
+
+It installs everything, makes a deploy key (paste it into repo Settings -> Deploy keys with write access), and schedules `pi/run.sh` every 10 minutes. Logs: `journalctl -u carfinder -n 40`.
 
 ## Setup (one time)
 
