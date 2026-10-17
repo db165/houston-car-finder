@@ -23,8 +23,10 @@ def evaluate(lot, cfg):
         reject.append(f"older than {sc['minYear']}")
     key = norm(f"{lot.get('make')} {lot.get('model')}")
     maxMiles = next((v for k, v in (sc.get("maxMilesByModel") or {}).items() if key.startswith(norm(k))), sc["maxMiles"])
+    if lot.get("miles") is not None and lot["miles"] < 100:
+        warn.append("odometer reads ~0 (exempt or not actual), check the history")
     if lot.get("miles") and lot["miles"] > maxMiles:
-        reject.append(f"over {maxMiles:,} miles")
+        reject.append(f"over {int(maxMiles):,} miles")
     if dmg not in okPrimary:
         reject.append(f"damage: {dmg.title() or 'unknown'}")
     if sec not in okSecondary:
@@ -40,8 +42,8 @@ def evaluate(lot, cfg):
         warn.append("title type not shown yet")
     if "DEPLOYED" in (lot.get("airbags") or "").upper():
         reject.append("airbags deployed")
-    rv, rc = lot.get("retailValue") or 0, lot.get("repairCost") or 0
-    if rv and rv > sc["maxRetailValue"]:
+    rv, rc = int(lot.get("retailValue") or 0), int(lot.get("repairCost") or 0)
+    if rv > sc["maxRetailValue"]:
         reject.append(f"retail value ${rv:,} over ${sc['maxRetailValue']:,}")
     if rv > 0 and rc > 0 and rc / rv > sc["maxRepairRatio"]:
         reject.append(f"repair estimate is {rc / rv:.0%} of value")
