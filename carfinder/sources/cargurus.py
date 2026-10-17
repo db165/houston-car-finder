@@ -3,7 +3,7 @@
 import json
 from urllib.parse import urlencode
 
-from ..listing import Listing
+from ..listing import Listing, transmissionOf
 
 marker = "window.__remixContext = "
 
@@ -13,11 +13,13 @@ def searchUrl(m, area, cfg, maxPrice, sortType="PRICE"):
         "zip": area["zip"],
         "distance": area["radiusMiles"],
         "maxPrice": maxPrice,
-        "startYear": cfg["minYear"],
-        "maxMileage": cfg["maxMiles"],
+        "startYear": m.get("minYear", cfg["minYear"]),
+        "maxMileage": m.get("maxMiles", cfg["maxMiles"]),
         "sortType": sortType,
         "sortDirection": "ASC",
     }
+    if m.get("maxYear"):
+        params["endYear"] = m["maxYear"]
     slug = f"l-Used-{m['make']}-{m['model'].replace(' ', '-')}-{m['cargurus'].split('/')[-1]}"
     return f"https://www.cargurus.com/Cars/{slug}?" + urlencode(params)
 
@@ -75,6 +77,7 @@ def toListing(d, m, region):
         titleStatus="clean",
         cylinders=engineCylinders(d.get("localizedEngineName")),
         drive=driveCode(d.get("localizedDrivetrain")),
+        transmission=transmissionOf(d.get("localizedTransmission")),
         mpg=fuel.get("combinedEconomy"),
         vin=d.get("vin") or "",
         city=seller.get("city") or "",
