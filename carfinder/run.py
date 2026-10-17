@@ -7,13 +7,15 @@ import os
 import statistics
 import time
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from pathlib import Path
 
 import yaml
 
 from .fetch import Fetcher, Blocked
 from .sources import craigslist, cargurus
-from . import filters, pricing, reliability, vision, notify
+from . import filters, pricing, reliability, vision, notify, salvage
+from .listing import Listing
 
 day = 86400
 
@@ -72,7 +74,8 @@ def crawlAll(cfg, fetcher, recs, meta):
     return found, touched, status
 
 
-def mergeListings(recs, found, touched, now):
+def mergeListings(recs, found, touched, now, seenAt=None):
+    seenAt = seenAt or now
     for lst in found:
         d = lst.toDict()
         old = recs.get(lst.id)
@@ -84,28 +87,88 @@ def mergeListings(recs, found, touched, now):
             old.update(d)
             old.update(keep)
         else:
-            d.update(firstSeen=now, priceHistory=[[now, d["price"]]], alerted=[])
+            d.update(firstSeen=seenAt, priceHistory=[[seenAt, d["price"]]], alerted=[])
             recs[lst.id] = d
-        recs[lst.id]["lastSeen"] = now
+        recs[lst.id]["lastSeen"] = seenAt
     for lid in touched:
         if lid in recs:
             recs[lid]["lastSeen"] = now
 
 
+# reasons a car can't be bought by you that still leave its price meaningful as market data
+compOkReasons = ("over stretch budget", "automatic transmission", "transmission not stated", "under 20 mpg")
+
+
 def updateComps(comps, listings, now, cfg, maxAgeDays=45):
-    # every cargurus car, plus craigslist ads that are real cash prices for a clean, running car
+    # dealer cars (cargurus, autolist) plus private ads that are real cash prices for a clean, running car
     for l in listings:
         if not l.model or not l.year or not l.miles or not l.price:
             continue
-        if l.source == "craigslist":
+        if l.source in ("craigslist", "offerup"):
             reject, _ = filters.evaluate(l, cfg)
-            if [r for r in reject if r != "over stretch budget"]:
+            if [r for r in reject if not r.startswith(compOkReasons)]:
                 continue
         comps.setdefault(l.model, {})[l.id] = {
             "year": l.year, "miles": l.miles, "price": l.price, "marketValue": l.marketValue,
             "source": l.source, "ts": now}
     for model in comps:
         comps[model] = {k: v for k, v in comps[model].items() if now - v["ts"] < maxAgeDays * day}
+
+
+## raspberry pi snapshot (autolist, offerup, cargurus, copart, iaa)
+
+def loadCollected(path, cfg, now):
+    snap = loadJson(Path(path) / "collected.json", None) if path else None
+    if not snap:
+        return None
+    age = now - snap.get("collectedAt", 0)
+    status = {f"pi {k}": v for k, v in (snap.get("status") or {}).items()}
+    status["pi last check-in"] = f"{age // 60} min ago"
+    if age > cfg["crawl"].get("piStaleHours", 6) * 3600:
+        status["pi last check-in"] += " (stale, ignored)"
+        return {"status": status, "listings": [], "comps": [], "lots": [], "at": snap.get("collectedAt", 0)}
+    fields = set(Listing.__dataclass_fields__)
+    toL = lambda d: Listing(**{k: v for k, v in d.items() if k in fields})
+    return {"status": status, "at": snap["collectedAt"],
+            "listings": [toL(d) for d in snap.get("listings", [])],
+            "comps": [toL(d) for d in snap.get("comps", [])],
+            "lots": snap.get("lots", [])}
+
+
+def saleText(lot):
+    sd = lot.get("saleDate")
+    if isinstance(sd, (int, float)) or (isinstance(sd, str) and sd.isdigit()):
+        t = datetime.fromtimestamp(int(sd) / 1000, ZoneInfo("America/Chicago"))
+        return t.strftime("%a %b %-d, %-I:%M%p").replace("AM", "am").replace("PM", "pm")
+    return sd or "TBD"
+
+
+def mergeLots(lots, found, seenAt):
+    for lot in found:
+        old = lots.get(lot["id"])
+        if old:
+            keep = {k: old[k] for k in ("firstSeen", "alerted", "vision", "visionPhotos") if k in old}
+            old.clear()
+            old.update(lot)
+            old.update(keep)
+        else:
+            lot.update(firstSeen=seenAt, alerted=False)
+            lots[lot["id"]] = lot
+        lots[lot["id"]]["lastSeen"] = seenAt
+
+
+def evaluateLots(lots, cfg, now):
+    for lot in lots.values():
+        lot["active"] = now - lot["lastSeen"] < 2 * day
+        if not lot["active"]:
+            continue
+        reject, warn = salvage.evaluate(lot, cfg)
+        if lot.get("vision") and vision.isDamageDealbreaker(lot["vision"]):
+            reject.append("photos: " + (lot["vision"].get("notes") or "damage looks severe"))
+        lot["rejected"], lot["flags"] = reject, warn
+        lot["ratio"] = salvage.repairRatio(lot)
+        lot["saleText"] = saleText(lot)
+        lot["tier"] = "rejected" if reject else "auction"
 
 
 ## deciding what each car is
@@ -229,6 +292,47 @@ def visionPass(recs, cfg, meta):
             rec["tier"] = "rejected"
 
 
+def lotVisionPass(lots, cfg, meta):
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        return
+    queue = [l for l in lots.values() if l.get("active") and l.get("tier") == "auction"
+             and l.get("photos") and l.get("visionPhotos") != l["photos"][:4]]
+    errors = 0
+    for lot in queue:
+        if meta["visionCount"] >= cfg["vision"]["maxPerDay"]:
+            break
+        v = vision.check(lot["photos"], cfg, vision.damagePrompt)
+        if v is None:
+            continue
+        meta["visionCount"] += 1
+        if v.get("error"):
+            errors += 1
+            if errors == 1:
+                log(f"lot photo check error: {v['error']}")
+            if errors >= 3:
+                return
+            continue
+        lot["vision"], lot["visionPhotos"] = v, lot["photos"][:4]
+        if vision.isDamageDealbreaker(v):
+            lot["rejected"] = ["photos: " + (v.get("notes") or "damage looks severe")]
+            lot["tier"] = "rejected"
+
+
+def lotAlertPass(lots, quiet, maxPerRun):
+    sent = 0
+    # mildest damage first
+    pending = sorted((l for l in lots.values() if l.get("active") and l.get("tier") == "auction" and not l.get("alerted")),
+                     key=lambda l: l.get("ratio") if l.get("ratio") is not None else 0.5)
+    for lot in pending:
+        if not quiet:
+            if sent >= maxPerRun:
+                break
+            if notify.sendLot(lot):
+                sent += 1
+        lot["alerted"] = True
+    return sent
+
+
 def alertPass(recs, meta, quiet, maxPerRun=5):
     kinds = {"steal": "steal", "stretch-deal": "stretch", "austin": "austin"}
     sent = 0
@@ -253,7 +357,13 @@ dashFields = ["id", "source", "url", "title", "price", "make", "model", "year", 
               "firstSeen", "lastSeen", "priceHistory", "appraisal", "flags", "rejected", "tier", "vision", "active"]
 
 
-def exportDashboard(recs, fits, status, outDir, now):
+lotFields = ["id", "source", "url", "title", "year", "make", "model", "trim", "miles", "damage", "secondaryDamage",
+             "condition", "titleType", "airbags", "keys", "retailValue", "repairCost", "ratio", "currentBid", "buyNow",
+             "saleText", "yard", "distance", "transmission", "cylinders", "photos", "crDamages", "firstSeen",
+             "lastSeen", "flags", "rejected", "tier", "vision", "active"]
+
+
+def exportDashboard(recs, fits, status, outDir, now, lots=None):
     rows = []
     for r in recs.values():
         if not r.get("model") or (r.get("rejected") or [""])[0] == "over stretch budget":
@@ -264,8 +374,16 @@ def exportDashboard(recs, fits, status, outDir, now):
         row["photos"] = (r.get("photos") or [])[:1]
         row["description"] = (r.get("description") or "")[:600]
         rows.append(row)
+    lotRows = []
+    for l in (lots or {}).values():
+        # matches, plus ones the photo check threw out so you can see why
+        if not l.get("active") or not (l.get("tier") == "auction" or any(r.startswith(("photos", "airbags")) for r in l.get("rejected", []))):
+            continue
+        row = {k: l.get(k) for k in lotFields}
+        row["photos"] = (l.get("photos") or [])[:1]
+        lotRows.append(row)
     saveJson(Path(outDir) / "data.json", {
-        "updatedAt": now, "sources": status, "listings": rows,
+        "updatedAt": now, "sources": status, "listings": rows, "lots": lotRows,
         "fits": {m: f and {"n": f["n"], "spread": round(f["spread"], 3)} for m, f in fits.items()},
     })
 
@@ -277,6 +395,7 @@ def main():
     ap.add_argument("--config", default="config.yml")
     ap.add_argument("--state", default="state", help="folder holding history + dashboard data")
     ap.add_argument("--quiet", action="store_true", help="never send phone alerts")
+    ap.add_argument("--collected", default=None, help="folder with the pi's collected.json")
     args = ap.parse_args()
 
     cfg = yaml.safe_load(Path(args.config).read_text())
@@ -286,6 +405,7 @@ def main():
     comps = loadJson(st / "comps.json", {})
     nhtsa = loadJson(st / "nhtsa.json", {})
     meta = loadJson(st / "meta.json", {})
+    lots = loadJson(st / "lots.json", {})
     now = int(time.time())
     fetcher = Fetcher(cfg["crawl"]["delaySeconds"])
 
@@ -302,14 +422,29 @@ def main():
     found, touched, status = crawlAll(cfg, fetcher, recs, meta)
     mergeListings(recs, found, touched, now)
     updateComps(comps, found, now, cfg)
+
+    pi = loadCollected(args.collected, cfg, now)
+    if pi:
+        status.update(pi["status"])
+        mergeListings(recs, pi["listings"], [], now, seenAt=pi["at"])
+        updateComps(comps, pi["listings"] + pi["comps"], pi["at"], cfg)
+        mergeLots(lots, pi["lots"], pi["at"])
+        log(f"pi: {len(pi['listings'])} listings, {len(pi['lots'])} auction lots")
     fits = pricing.buildFits({m: list(v.values()) for m, v in comps.items()})
     evaluateAll(recs, fits, nhtsa, cfg, now)
+    evaluateLots(lots, cfg, now)
     visionPass(recs, cfg, meta)
+    lotVisionPass(lots, cfg, meta)
 
     # first ever run: record everything as already seen so your phone doesn't get 40 pings
     firstRun = not meta.get("initialized")
     sent = alertPass(recs, meta, quiet=args.quiet or firstRun, maxPerRun=cfg.get("alerts", {}).get("maxPerRun", 5))
     meta["initialized"] = True
+    # same idea for auctions: the first batch of lots is recorded, not pushed to your phone
+    lotsFirst = not meta.get("lotsInitialized") and bool(lots)
+    sent += lotAlertPass(lots, quiet=args.quiet or lotsFirst, maxPerRun=cfg.get("copart", {}).get("maxAlertsPerRun", 5))
+    if lots:
+        meta["lotsInitialized"] = True
     if firstRun and os.environ.get("NTFY_TOPIC") and not args.quiet:
         notify.sendText("Car finder is live",
                         f"Tracking {sum(1 for r in recs.values() if r.get('tier') not in (None, 'rejected'))} cars. "
@@ -320,7 +455,9 @@ def main():
     saveJson(st / "comps.json", comps)
     saveJson(st / "nhtsa.json", nhtsa)
     saveJson(st / "meta.json", meta)
-    exportDashboard(recs, fits, status, st, now)
+    lots = {k: v for k, v in lots.items() if now - v["lastSeen"] < 14 * day}
+    saveJson(st / "lots.json", lots)
+    exportDashboard(recs, fits, status, st, now, lots)
 
     tiers = {}
     for r in recs.values():
