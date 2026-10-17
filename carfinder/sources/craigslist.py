@@ -5,7 +5,7 @@ import re
 from urllib.parse import urlencode
 from bs4 import BeautifulSoup
 
-from ..listing import Listing, parseInt, matchModel
+from ..listing import Listing, parseInt, matchModel, transmissionOf
 from ..fetch import Blocked
 
 siteHosts = {"houston": "houston", "austin": "austin"}
@@ -14,17 +14,20 @@ dealerCues = re.compile(r"\b(dealer(ship)?|stock ?(#|no|number)|we finance|finan
                         r"warranty available|trade[- ]ins? (welcome|accepted)|tx dealer|dealer fees?)\b", re.I)
 
 
-def searchUrl(region, area, cfg, word, maxPrice):
+def searchUrl(region, area, cfg, word, maxPrice, m=None):
+    m = m or {}
     params = {
         "query": word,
         "postal": area["zip"],
         "search_distance": area["radiusMiles"],
-        "min_auto_year": cfg["minYear"],
-        "max_auto_miles": cfg["maxMiles"],
+        "min_auto_year": m.get("minYear", cfg["minYear"]),
+        "max_auto_miles": m.get("maxMiles", cfg["maxMiles"]),
         "auto_title_status": 1,          # clean title only
         "min_price": cfg["budget"]["minPrice"],
         "max_price": maxPrice,
     }
+    if m.get("maxYear"):
+        params["max_auto_year"] = m["maxYear"]
     return f"https://{siteHosts[region]}.craigslist.org/search/cta?" + urlencode(params)
 
 
@@ -116,6 +119,7 @@ def buildListing(postId, url, title, price, detail, cfg, region):
         titleStatus=attrs.get("auto_title_status", ""),
         cylinders=cyl,
         drive=attrs.get("auto_drivetrain", ""),
+        transmission=transmissionOf(attrs.get("auto_transmission", "")) or transmissionOf(title, detail.get("body", "")),
         vin=(attrs.get("auto_vin") or "").upper(),
         lat=detail.get("lat"),
         lon=detail.get("lon"),
@@ -130,7 +134,7 @@ def crawl(fetcher, cfg, region, area, maxPrice, known, log):
     seen, out = {}, []
     for m in cfg["models"]:
         word = m["words"][0]
-        html = fetcher.get(searchUrl(region, area, cfg, word, maxPrice)).text
+        html = fetcher.get(searchUrl(region, area, cfg, word, maxPrice, m)).text
         for row in parseSearch(html):
             seen.setdefault(row[0], row)
     log(f"craigslist {region}: {len(seen)} search hits")
