@@ -1,7 +1,7 @@
 ## hard rules (reject) and soft flags (warn) for every listing
 
 import re
-from .listing import countModelMentions, milesBetween
+from .listing import countModelMentions, milesBetween, modelCfg
 
 # ads that aren't really a cash price
 financePatterns = [
@@ -64,11 +64,24 @@ def tacomaMpgOk(lst):
     return True, None
 
 
+def rangerMpgOk(lst):
+    # epa combined: 2.3/2.5 4-cyl 2wd manual ~21-23 mpg; the 3.0/4.0 v6s and 4x4s are 15-18
+    if lst.cylinders == 6 or lst.drive == "4wd":
+        return False, None
+    if lst.cylinders == 4:
+        return True, None
+    return True, "verify it's the 4-cyl (the V6 Rangers get ~16 mpg)"
+
+
 def evaluate(lst, cfg):
     # returns (rejectReasons, warnFlags)
     reject, warn = [], []
     text = f"{lst.title} {lst.description}".lower()
     budget = cfg["budget"]
+    mc = modelCfg(cfg, lst.model)
+    minYear = mc.get("minYear", cfg["minYear"])
+    maxYear = mc.get("maxYear")
+    maxMiles = mc.get("maxMiles", cfg["maxMiles"])
 
     if not lst.model:
         reject.append("not a target model")
@@ -78,12 +91,14 @@ def evaluate(lst, cfg):
         reject.append("over stretch budget")
     if lst.year is None:
         warn.append("year not listed")
-    elif lst.year < cfg["minYear"]:
-        reject.append(f"older than {cfg['minYear']}")
+    elif lst.year < minYear:
+        reject.append(f"older than {minYear}")
+    elif maxYear and lst.year > maxYear:
+        reject.append(f"newer than {maxYear}")
     if lst.miles is None:
         warn.append("mileage not listed")
-    elif lst.miles > cfg["maxMiles"]:
-        reject.append(f"over {cfg['maxMiles']:,} miles")
+    elif lst.miles > maxMiles:
+        reject.append(f"over {maxMiles:,} miles")
     elif lst.miles < 1000 and lst.year and lst.year < 2020:
         warn.append("mileage looks like it's in thousands or fake")
 
@@ -108,6 +123,18 @@ def evaluate(lst, cfg):
             reject.append("under 20 mpg (Tacoma v6 or 4x4)")
         elif note:
             warn.append(note)
+    if lst.model == "Ranger":
+        ok, note = rangerMpgOk(lst)
+        if not ok:
+            reject.append("under 20 mpg (Ranger v6 or 4x4)")
+        elif note:
+            warn.append(note)
+    if mc.get("manualOnly"):
+        trans = getattr(lst, "transmission", "")
+        if trans == "automatic":
+            reject.append("automatic transmission (manual only)")
+        elif trans != "manual":
+            reject.append("transmission not stated (manual only)")
     if lst.mpg is not None and lst.mpg < cfg["minMpg"]:
         reject.append(f"{lst.mpg:.0f} mpg")
 
