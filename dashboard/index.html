@@ -82,7 +82,9 @@ const tabs = [
   {key:"stretch", label:"Stretch", match:r => ["stretch","stretch-deal"].includes(r.tier)},
   {key:"austin", label:"Austin", match:r => r.tier === "austin"},
   {key:"rejected", label:"Filtered out", match:r => r.tier === "rejected" && r.rejected?.[0] !== "over stretch budget"},
+  {key:"auctions", label:"Copart + IAA", lots:true, match:l => l.tier === "auction"},
 ];
+let lots = [];
 let state = {tab:"deals", model:"", sort:"deal"};
 let rows = [];
 const fmt = n => n == null ? "?" : n.toLocaleString("en-US");
@@ -98,7 +100,8 @@ function card(r){
   if (now - r.firstSeen < 86400) badges.push(`<span class="badge new">New</span>`);
   const hist = r.priceHistory || [];
   if (hist.length > 1 && hist[hist.length-1][1] < hist[0][1]) badges.push(`<span class="badge drop">Dropped $${fmt(hist[0][1] - hist[hist.length-1][1])}</span>`);
-  badges.push(`<span class="badge">${r.source === "cargurus" ? "Dealer · CarGurus" : (r.sellerType === "dealer" ? "Dealer" : "Private") + " · Craigslist"}</span>`);
+  const site = {cargurus:"CarGurus", autolist:"Autolist", offerup:"OfferUp", craigslist:"Craigslist"}[r.source] || r.source;
+  badges.push(`<span class="badge">${r.sellerType === "dealer" ? "Dealer" : "Private"} · ${esc(site)}</span>`);
   const specs = [
     r.miles != null ? `${fmt(r.miles)} mi` : "miles ?",
     r.distance != null ? `${r.distance} mi away` : (r.city || r.region),
@@ -127,11 +130,46 @@ function card(r){
     </div></article>`;
 }
 
+function lotCard(l){
+  const money = n => n ? "$" + fmt(Math.round(n)) : "?";
+  const badges = [`<span class="badge deal">${l.source === "copart" ? "Copart" : "IAA"}</span>`];
+  if (Date.now()/1000 - l.firstSeen < 86400) badges.push(`<span class="badge new">New</span>`);
+  const specs = [
+    l.miles ? `${fmt(l.miles)} mi` : "miles ?",
+    l.distance != null ? `${Math.round(l.distance)} mi from shop` : l.yard,
+    l.condition, l.titleType, l.transmission, l.cylinders ? `${l.cylinders}-cyl` : null,
+  ].filter(Boolean).map(s => `<span class="spec">${esc(s)}</span>`).join("");
+  const dmg = [l.damage, l.secondaryDamage].filter(Boolean).map(s => s.toLowerCase()).join(" + ");
+  const v = l.vision && !l.vision.error && l.vision.photosUseful !== false
+    ? `<div class="vision">📷 ${esc(l.vision.severity)} damage${(l.vision.partsLikely||[]).length ? ": " + esc(l.vision.partsLikely.join(", ")) : ""}. ${esc(l.vision.notes || "")}</div>` : "";
+  const flags = (l.flags || []).map(f => `<div class="flag">⚠ ${esc(f)}</div>`).join("")
+    + (l.rejected || []).map(f => `<div class="flag bad">✕ ${esc(f)}</div>`).join("");
+  const cr = (l.crDamages || []).length ? `<details><summary>Condition report</summary>${l.crDamages.map(esc).join("<br>")}</details>` : "";
+  return `<article class="card">
+    <div class="photo" style="background-image:url('${esc((l.photos||[])[0] || "")}')"><div class="badges">${badges.join("")}</div></div>
+    <div class="body">
+      <div class="name">${esc(l.year)} ${esc(l.make)} ${esc(l.model)} <span class="mv">${esc(l.trim || "")}</span></div>
+      <div class="priceRow"><span class="price">${l.currentBid ? money(l.currentBid) : "No bids"}</span>
+        <span class="mv">retail ~${money(l.retailValue)}${l.repairCost ? " · est repair " + money(l.repairCost) : ""}</span></div>
+      <div class="specs"><span class="spec">Damage: ${esc(dmg || "?")}</span><span class="spec">Sale: ${esc(l.saleText || "TBD")}</span>${specs}</div>
+      ${v}${flags}${cr}
+      <div class="links"><a href="${esc(l.url)}" target="_blank" rel="noopener">Open lot</a><span class="mv">${esc(l.yard || "")}</span></div>
+    </div></article>`;
+}
+
 function render(){
   const active = rows.filter(r => r.active);
+  const activeLots = lots.filter(l => l.active);
   document.getElementById("tabs").innerHTML = tabs.map(t =>
-    `<button class="${state.tab === t.key ? "on" : ""}" data-tab="${t.key}">${t.label}<span class="count">${active.filter(t.match).length}</span></button>`).join("");
+    `<button class="${state.tab === t.key ? "on" : ""}" data-tab="${t.key}">${t.label}<span class="count">${(t.lots ? activeLots : active).filter(t.match).length}</span></button>`).join("");
   const tab = tabs.find(t => t.key === state.tab);
+  if (tab.lots) {
+    const list = activeLots.filter(tab.match).filter(l => !state.model || l.model.toLowerCase() === state.model.toLowerCase());
+    list.sort((a, b) => (a.ratio ?? 0.5) - (b.ratio ?? 0.5));
+    document.getElementById("grid").innerHTML = list.length ? list.map(lotCard).join("")
+      : `<div class="empty">No clean-title, drivable front-end hits near the shop right now.</div>`;
+    return;
+  }
   let list = active.filter(tab.match).filter(r => !state.model || r.model === state.model);
   const key = {
     deal: r => -(r.appraisal?.dealPct ?? -9),
@@ -148,6 +186,7 @@ document.getElementById("sort").onchange = e => { state.sort = e.target.value; r
 
 fetch("data.json?t=" + Date.now()).then(r => r.json()).then(d => {
   rows = d.listings || [];
+  lots = d.lots || [];
   const models = [...new Set(rows.map(r => r.model).filter(Boolean))].sort();
   document.getElementById("model").innerHTML += models.map(m => `<option>${esc(m)}</option>`).join("");
   const active = rows.filter(r => r.active && r.tier !== "rejected").length;
