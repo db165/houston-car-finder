@@ -47,7 +47,7 @@ until keyWorks; do
 done
 echo "GitHub accepted the key."
 
-echo "== 4/5 scheduling a run every 10 minutes (survives reboots and power cuts)"
+echo "== 4/5 scheduling a run every hour (survives reboots and power cuts)"
 sudo tee /etc/systemd/system/carfinder.service > /dev/null <<EOF
 [Unit]
 Description=car finder collector
@@ -62,11 +62,11 @@ TimeoutStartSec=15min
 EOF
 sudo tee /etc/systemd/system/carfinder.timer > /dev/null <<EOF
 [Unit]
-Description=run the car finder collector every 10 minutes
+Description=run the car finder collector every hour
 
 [Timer]
 OnBootSec=2min
-OnUnitActiveSec=10min
+OnUnitActiveSec=60min
 Persistent=true
 
 [Install]
